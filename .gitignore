@@ -1,0 +1,49 @@
+# Sovereign Bitcoin Agent Gitignore
+
+# 1. Environment & Secrets 🛡️
+.env
+.env.*
+!.env.example
+*.key
+*.wif
+*.pem
+*.secret
+*.simf
+policy.json
+
+# 2. Virtual Environments & Local Caches
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# 3. Rust & Compiled Binaries
+target/
+**/*.rs.bk
+*.bin
+
+# 4. Logs & Operating System
+*.log
+agent.log
+gateway.log
+bot.log
+enclave.log
+bridge.log
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# 5. AI Agent Local State & Telemetry
+.claude/
+.claw/
+.gemini/
+.MCP/
+node_modules/
+bun.lock
+
+# 6. Legacy 
+legacy/

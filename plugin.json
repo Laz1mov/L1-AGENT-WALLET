@@ -1,0 +1,104 @@
+{
+  "name": "agent-bitcoin-wallet",
+  "version": "1.1.0",
+  "description": "Sovereign Bitcoin Agent — a trustless, TEE-hardened hub for autonomous Bitcoin operations. Supports wallet management, Taproot transactions, governance policy, and Runes minting. Built on BIP-341/BIP-86 Schnorr signatures with Simplicity formal verification.",
+  "license": "MIT",
+  "repository": "https://github.com/your-org/agent-bitcoin-wallet",
+  "keywords": ["bitcoin", "taproot", "runes", "tee", "simplicity", "mcp", "agent"],
+  "skills": [
+    {
+      "name": "bitcoin-wallet",
+      "path": "skills/bitcoin-wallet/SKILL.md",
+      "description": "Read-only wallet state: Taproot address, live UTXO balance, and UTXOracle BTC price. Use before any operation that requires knowing available funds."
+    },
+    {
+      "name": "bitcoin-transactions",
+      "path": "skills/bitcoin-transactions/SKILL.md",
+      "description": "Send Bitcoin: single payments, batched multi-output transfers (up to 10), and OP_RETURN message etching. Includes the fee safety trap and governance escalation path."
+    },
+    {
+      "name": "bitcoin-governance",
+      "path": "skills/bitcoin-governance/SKILL.md",
+      "description": "Inspect and upgrade the 3-leaf Taproot spending policy (allowance, whale threshold, recovery). Policy upgrades require hardware wallet co-signature via QR code PSBT."
+    },
+    {
+      "name": "runes-minting",
+      "path": "skills/runes-minting/SKILL.md",
+      "description": "Full Rune lifecycle: Etch new Runes (closed premine or open-mint with Terms), and Mint tokens from existing open-mint Runes by RuneId. Live-proven on Mutinynet. No ord CLI required."
+    }
+  ],
+  "mcpServers": {
+    "sovereign-bitcoin": {
+      "description": "MCP bridge exposing the Sovereign Bitcoin Agent enclave. Requires the Rust enclave (port 7777) and Python gateway (port 8000) to be running.",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp-bridge/server.py"],
+      "env": {
+        "ENCLAVE_HOST": "127.0.0.1",
+        "ENCLAVE_PORT": "7777"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "get_my_bitcoin_address",
+      "description": "Returns the sovereign Taproot (P2TR) address managed by the TEE enclave."
+    },
+    {
+      "name": "check_my_balance",
+      "description": "Fetches the live UTXO balance in satoshis from the Mutinynet/Signet network."
+    },
+    {
+      "name": "get_bitcoin_price",
+      "description": "Returns the current BTC price from the UTXOracle L1 thermodynamic proxy."
+    },
+    {
+      "name": "get_governance_policy",
+      "description": "Returns the current Taproot governance policy: daily allowance, whale threshold, recovery path."
+    },
+    {
+      "name": "compose_transaction",
+      "description": "Constructs, signs, and broadcasts a Bitcoin transaction. Supports multi-output batching and OP_RETURN message etching. Enforces a 50 sat/vB fee safety trap."
+    },
+    {
+      "name": "propose_policy_update",
+      "description": "Generates a governance QR code (PSBT) for the user to authorize a spending limit upgrade via hardware wallet."
+    },
+    {
+      "name": "mint_rune",
+      "description": "Full Rune lifecycle via TEE enclave. ETCH: deploy a new Rune (closed premine or open-mint with Terms) using rune_name. MINT: claim tokens from an existing open-mint Rune using rune_id (block:tx format). Runestone built with the ordinals crate — no ord CLI. Live-proven on Mutinynet (OP•RETURN•WAR•II, block 3007261)."
+    }
+  ],
+  "architecture": {
+    "layers": [
+      {
+        "name": "enclave-signer",
+        "language": "Rust",
+        "port": 7777,
+        "description": "TEE-hardened signing kernel. BIP-86 Taproot, BIP-341 Schnorr, Simplicity VM, Runes Runestone builder."
+      },
+      {
+        "name": "agent-gateway",
+        "language": "Python",
+        "port": 8000,
+        "description": "FastAPI LLM reasoning loop. Dual-provider (Claude + Ollama), tool dispatch, Telegram bot."
+      },
+      {
+        "name": "mcp-bridge",
+        "language": "Python",
+        "port": 5005,
+        "description": "FastMCP server exposing wallet tools to Claude Desktop / Claude Code over the MCP protocol."
+      }
+    ],
+    "contracts": [
+      {
+        "file": "contracts/allowance.simf",
+        "description": "Simplicity contract enforcing daily spending allowance. Excludes change outputs and OP_RETURN from spend accounting."
+      },
+      {
+        "file": "contracts/governance.simf",
+        "description": "Simplicity contract for BIP-340 authorized policy state transitions."
+      }
+    ]
+  }
+}
