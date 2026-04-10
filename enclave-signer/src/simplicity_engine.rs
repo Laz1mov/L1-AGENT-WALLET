@@ -9,14 +9,35 @@ const MUTINY_FEE_SPK: &str = "5120f2f47aaae0da77257e69a0b2018b2ec30dc5d515c1a325
 const MAINNET_FEE_SPK: &str = "5120c7279d9a5f434b5d694c897a7777aae4f6f1b19fc6c65a7cbac9d26cea4d142e";
 const PROTOCOL_FEE_SAFETY_CAP: u64 = 50_000;
 
+// ── INTERNAL CONTRACTS (Baked into binary for Sovereignty) ──
+const ALLOWANCE_CONTRACT_INTERNAL: &str = r#"
+fn main() {
+    let total_spend: u64 = jet::total_output_amount();
+    let limit: u64       = witness::ALLOWANCE_LIMIT;
+    let is_authorized = jet::le_64(total_spend, limit);
+    jet::verify(is_authorized);
+}
+"#;
+
+const GOVERNANCE_CONTRACT_INTERNAL: &str = r#"
+fn main() {
+    let pubkey: u256  = witness::GOVERNANCE_PUBKEY;
+    let sig: [u8; 64] = witness::GOVERNANCE_SIG;
+    let msg: u256     = jet::sig_all_hash();
+    let sig_valid = jet::bip340_verify(pubkey, msg, sig);
+    jet::verify(sig_valid);
+}
+"#;
+
 impl SimplicityEngine {
-    /// Executes a Simplicity program loaded from disk against a PSBT's introspected amount.
+    /// Executes a Simplicity program loaded from disk or internal fallback against a PSBT.
     pub fn execute_allowance_contract(psbt: &bitcoin::Psbt, allowance_limit: u64) -> Result<()> {
         let path = Self::resolve_contract_path("allowance.simf");
         Self::execute_contract(
             &path,
             Some(psbt),
             Some(allowance_limit),
+            ALLOWANCE_CONTRACT_INTERNAL,
         )
     }
 
@@ -28,6 +49,7 @@ impl SimplicityEngine {
             &path,
             Some(psbt),
             None,
+            GOVERNANCE_CONTRACT_INTERNAL,
         )
     }
 
@@ -49,16 +71,21 @@ impl SimplicityEngine {
             }
         }
 
-        // Fallback to current dir
+        // Fallback to filename (might not exist, which triggers internal fallback)
         filename.to_string()
     }
 
     /// Internal generic contract execution runner using a formal-style BitMachine
-    fn execute_contract(path: &str, psbt_opt: Option<&bitcoin::Psbt>, limit: Option<u64>) -> Result<()> {
+    fn execute_contract(path: &str, psbt_opt: Option<&bitcoin::Psbt>, limit: Option<u64>, internal_fallback: &str) -> Result<()> {
         println!("⚙️ [BIT MACHINE] Loading Simm-C contract: {}...", path);
 
-        let contract_source = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("Fatal: Could not load Simplicity contract source: {}", e))?;
+        let contract_source = if std::path::Path::new(path).exists() {
+            std::fs::read_to_string(path)
+                .map_err(|e| anyhow!("Fatal: Could not load Simplicity contract source: {}", e))?
+        } else {
+            println!("⚠️  [BIT MACHINE] External contract not found. Falling back to Internal Sovereign Logic.");
+            internal_fallback.to_string()
+        };
 
         // 1. Instantiating the Formal BitMachine Environment
         println!(
