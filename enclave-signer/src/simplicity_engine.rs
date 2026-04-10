@@ -34,7 +34,7 @@ impl SimplicityEngine {
     pub fn execute_allowance_contract(psbt: &bitcoin::Psbt, allowance_limit: u64) -> Result<()> {
         let path = Self::resolve_contract_path("allowance.simf");
         Self::execute_contract(
-            &path,
+            path.as_deref(),
             Some(psbt),
             Some(allowance_limit),
             ALLOWANCE_CONTRACT_INTERNAL,
@@ -46,17 +46,18 @@ impl SimplicityEngine {
         println!("⚙️ [BIT MACHINE] Initializing Governance VM...");
         let path = Self::resolve_contract_path("governance.simf");
         Self::execute_contract(
-            &path,
+            path.as_deref(),
             Some(psbt),
             None,
             GOVERNANCE_CONTRACT_INTERNAL,
         )
     }
 
-    fn resolve_contract_path(filename: &str) -> String {
+    fn resolve_contract_path(filename: &str) -> Option<String> {
         // Priority 1: Environment Variable
         if let Ok(dir) = std::env::var("CONTRACTS_DIR") {
-            return std::path::Path::new(&dir).join(filename).to_string_lossy().to_string();
+            let path = std::path::Path::new(&dir).join(filename);
+            return Some(path.to_string_lossy().to_string());
         }
 
         // Priority 2: Standard relative paths
@@ -67,23 +68,21 @@ impl SimplicityEngine {
 
         for p in paths {
             if std::path::Path::new(&p).exists() {
-                return p;
+                return Some(p);
             }
         }
 
-        // Fallback to filename (might not exist, which triggers internal fallback)
-        filename.to_string()
+        None
     }
 
     /// Internal generic contract execution runner using a formal-style BitMachine
-    fn execute_contract(path: &str, psbt_opt: Option<&bitcoin::Psbt>, limit: Option<u64>, internal_fallback: &str) -> Result<()> {
-        println!("⚙️ [BIT MACHINE] Loading Simm-C contract: {}...", path);
-
-        let contract_source = if std::path::Path::new(path).exists() {
-            std::fs::read_to_string(path)
+    fn execute_contract(path: Option<&str>, psbt_opt: Option<&bitcoin::Psbt>, limit: Option<u64>, internal_fallback: &str) -> Result<()> {
+        let contract_source = if let Some(p) = path {
+            println!("⚙️ [BIT MACHINE] Loading external Simm-C contract: {}...", p);
+            std::fs::read_to_string(p)
                 .map_err(|e| anyhow!("Fatal: Could not load Simplicity contract source: {}", e))?
         } else {
-            println!("⚠️  [BIT MACHINE] External contract not found. Falling back to Internal Sovereign Logic.");
+            println!("⚙️ [BIT MACHINE] Using Internal Sovereign Logic (Autonomous Mode).");
             internal_fallback.to_string()
         };
 
