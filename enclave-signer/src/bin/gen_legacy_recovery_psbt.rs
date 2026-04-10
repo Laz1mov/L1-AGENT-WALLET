@@ -83,54 +83,72 @@ fn main() {
 
     let network = network_from_env();
     
-    // ─── FORENSIC DISCOVERY MODE ───
-    println!("\n🔍 SOVEREIGN FORENSIC DISCOVERY");
+    // ─── EXHAUSTIVE SCAN MODE ───
+    println!("\n🔍 SOVEREIGN FORENSIC ULTIMATE SCAN");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("🔑 Internal Key (Enclave Static): {}", internal_key);
-    println!("👤 Master Human Key:             {}", master_xonly);
-    println!("🌐 Active Network:                {:?}", network);
+    println!("🔑 Enclave Key: {}", internal_key);
+    println!("👤 Master Key:  {}", master_xonly);
+    println!("🌐 Network:     {:?}", network);
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    // Candidate A: BIP-86 (Key Path Only)
-    let addr_bip86 = Address::p2tr(&secp, internal_key, None, network);
-    println!("A [BIP-86 Key Path Only]:   {}", addr_bip86);
+    let mut candidates = Vec::new();
 
-    // Candidate B: Legacy MAST (1 Leaf @ Depth 0)
-    let spend_info_legacy = TaprootBuilder::new()
-        .add_leaf(0, recovery_script.clone())
-        .unwrap()
-        .finalize(&secp, internal_key)
-        .unwrap();
-    let addr_legacy = Address::p2tr(&secp, internal_key, spend_info_legacy.merkle_root(), network);
-    println!("B [Legacy MAST Depth 0]:    {}", addr_legacy);
+    // Group 1: Enclave as Internal Key
+    let p = internal_key;
+    let m = master_xonly;
+    
+    // A: BIP-86
+    candidates.push(("Enclave BIP-86", Address::p2tr(&secp, p, None, network), None, None));
 
-    // Candidate C: Hardened MAST (3 Leaves)
-    // Structure: Leaf 1 (Depth 1), Leaf 2 (Depth 2), Leaf 3 (Depth 2)
-    // We use the Genesis default scripts to ensure the Merkle Root matches.
-    let allowance_script = ScriptBuf::new(); // Default allowance was empty/fallback
-    let whale_script = ScriptBuf::builder()
-        .push_slice(internal_key.serialize()) // Enclave
-        .push_slice(master_xonly.serialize())  // Master
-        .push_opcode(bitcoin::opcodes::all::OP_CHECKMULTISIG) // Legacy 2-of-2 logic
-        .into_script();
+    // B: Legacy Depth 0
+    let spend_info = TaprootBuilder::new().add_leaf(0, recovery_script.clone()).unwrap().finalize(&secp, p).unwrap();
+    candidates.push(("Enclave Legacy Depth 0", Address::p2tr(&secp, p, spend_info.merkle_root(), network), Some(spend_info), Some(recovery_script.clone())));
 
-    let spend_info_hardened = TaprootBuilder::new()
-        .add_leaf(1, allowance_script.clone()).unwrap() 
-        .add_leaf(2, whale_script.clone()).unwrap()
-        .add_leaf(2, recovery_script.clone()).unwrap()
-        .finalize(&secp, internal_key)
-        .unwrap();
-    let addr_hardened = Address::p2tr(&secp, internal_key, spend_info_hardened.merkle_root(), network);
-    println!("C [Hardened MAST 3-Leaf]:   {}", addr_hardened);
+    // C: Hardened Permutations (1, 2, 2)
+    let leaves = vec![
+        ("Recovery", recovery_script.clone()),
+        ("Whale", ScriptBuf::builder().push_slice(p.serialize()).push_slice(m.serialize()).push_opcode(bitcoin::opcodes::all::OP_CHECKMULTISIG).into_script()),
+        ("Allowance", ScriptBuf::new()),
+    ];
+
+    // Permutation 1: Allowance (1), Whale (2), Recovery (2)
+    let info = TaprootBuilder::new().add_leaf(1, leaves[2].1.clone()).unwrap().add_leaf(2, leaves[1].1.clone()).unwrap().add_leaf(2, leaves[0].1.clone()).unwrap().finalize(&secp, p).unwrap();
+    candidates.push(("Hardened (Allow1, Whale2, Recov2)", Address::p2tr(&secp, p, info.merkle_root(), network), Some(info), Some(recovery_script.clone())));
+
+    // Permutation 2: Recovery (1), Whale (2), Allowance (2)
+    let info = TaprootBuilder::new().add_leaf(1, leaves[0].1.clone()).unwrap().add_leaf(2, leaves[1].1.clone()).unwrap().add_leaf(2, leaves[2].1.clone()).unwrap().finalize(&secp, p).unwrap();
+    candidates.push(("Hardened (Recov1, Whale2, Allow2)", Address::p2tr(&secp, p, info.merkle_root(), network), Some(info), Some(recovery_script.clone())));
+
+    // Group 2: Master as Internal Key (Inverted)
+    let p = master_xonly;
+    let enclave_recovery = ScriptBuf::builder().push_slice(internal_key.serialize()).push_opcode(bitcoin::opcodes::all::OP_CHECKSIG).into_script();
+    
+    candidates.push(("Master BIP-86 (Inverted)", Address::p2tr(&secp, p, None, network), None, None));
+    
+    let info = TaprootBuilder::new().add_leaf(0, enclave_recovery.clone()).unwrap().finalize(&secp, p).unwrap();
+    candidates.push(("Master Legacy Depth 0 (Inverted)", Address::p2tr(&secp, p, info.merkle_root(), network), Some(info), Some(enclave_recovery.clone())));
+
+    // Candidate discovery
+    for (name, addr, _, _) in &candidates {
+        println!("{:<35} : {}", name, addr);
+    }
 
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("If your target address bc1pzj... is listed above, copy its letter.");
-    println!("Currently generating PSBT for: C [HARDENED MAST 3-LEAF]");
+    println!("Searching for: bc1pzjfr...");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    // ─── Generate PSBT for Candidate C (Hardened) ───
-    let agent_address = addr_hardened;
-    let spend_info = spend_info_hardened;
+    // Match and generate PSBT if target provided in dest
+    let mut selected_idx = 1; // Default to Enclave Legacy
+    for (i, (_, addr, _, _)) in candidates.iter().enumerate() {
+       if addr.to_string().starts_with("bc1pzjfr") {
+           println!("🎯 MATCH FOUND: index {}", i);
+           selected_idx = i;
+       }
+    }
+
+    let (_, agent_address, spend_info_opt, script_opt) = &candidates[selected_idx];
+    let spend_info = spend_info_opt.as_ref().expect("Cannot spend BIP-86 via script path tool");
+    let recovery_script = script_opt.as_ref().unwrap();
     
     // Build transaction
     let dest_addr = Address::from_str(&req.destination).expect("Invalid dest").assume_checked();
