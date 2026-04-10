@@ -99,6 +99,20 @@ def run_batch_mint():
     # 🛡️ HARDCODED: OP•RETURN•WAR — The Sovereign Rune
     rune_id = "894897:128"
     log_success(f"Rune Target: {BOLD}OP•RETURN•WAR{RESET} ({rune_id})")
+    
+    # 🛡️ RUNE DELIVERY: Where should the minted Runes be sent?
+    default_dest = os.getenv("MASTER_RECEIVE_ADDRESS", "").strip("'\"")
+    if default_dest:
+        dest_prompt = f"Rune delivery address? [{default_dest}]"
+    else:
+        dest_prompt = "Rune delivery address (bc1p...)"
+    dest_input = interactive_prompt(dest_prompt, default_dest)
+    if not dest_input or not dest_input.startswith("bc1"):
+        log_error("Invalid destination address. Must start with bc1.")
+        return
+    destination_address = dest_input
+    log_success(f"Rune Delivery: {BOLD}{destination_address}{RESET}")
+    
     count = int(interactive_prompt("Batch size? (Max 25)", "25"))
     fee_rate = get_recommended_fee()
     
@@ -144,7 +158,8 @@ def run_batch_mint():
         ("total_fee_sats", total_required),
         ("fee_rate", int(fee_rate)),
         ("rune_id", rune_id),
-        ("protocol_address", agent_address)
+        ("protocol_address", agent_address),
+        ("destination_address", destination_address)
     ])
     
     manifest_json = json.dumps(manifest, separators=(',', ':'))

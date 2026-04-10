@@ -259,7 +259,8 @@ impl EnclaveSigner {
         
         // Protocol constants
         let protocol_fee_sats = 1337;
-        let master_address = bitcoin::Address::from_str(&manifest.protocol_address)?
+        // 🛡️ RUNE DELIVERY: Dust goes to the human's receive address, NOT the agent
+        let destination_address = bitcoin::Address::from_str(&manifest.destination_address)?
             .assume_checked();
 
         for i in 0..manifest.count {
@@ -279,7 +280,7 @@ impl EnclaveSigner {
             // 2. Build Outputs with Hardcoded Fee Governance
             let outputs = vec![
                 TxOut { value: bitcoin::Amount::ZERO, script_pubkey: runestone_script }, // vout[0] (DYNAMIC RUNE)
-                TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: master_address.script_pubkey() }, // vout[1] (Master Dust)
+                TxOut { value: bitcoin::Amount::from_sat(546), script_pubkey: destination_address.script_pubkey() }, // vout[1] (Rune Delivery → Human)
                 TxOut { value: bitcoin::Amount::from_sat(protocol_fee_sats), script_pubkey: protocol_fee_spk.clone() }, // vout[2] (HARDCODED FEE)
                 TxOut { value: bitcoin::Amount::from_sat(0), script_pubkey: self.get_script_pubkey(policy) }, // vout[3] (Chained Change)
             ];
@@ -348,6 +349,8 @@ pub struct BatchManifest {
     pub fee_rate: u16,
     pub rune_id: String,
     pub protocol_address: String,
+    /// The human's receive address where minted Runes are delivered (vout[1] dust)
+    pub destination_address: String,
 }
 
 #[cfg(test)]
@@ -415,6 +418,7 @@ mod tests {
             fee_rate: 1,
             rune_id: "894897:128".to_string(),
             protocol_address: "bc1p_protocol_wallet".to_string(),
+            destination_address: "bc1p_human_receive_addr".to_string(),
         };
         let result = signer.verify_master_mandate(&manifest, "00".repeat(64).as_str(), "00".repeat(32).as_str());
         assert!(result.is_err(), "Must fail with invalid mandate in RED phase");
@@ -433,6 +437,7 @@ mod tests {
             fee_rate: 1,
             rune_id: "894897:128".to_string(),
             protocol_address: "tb1plh5v6etrv25qnlrda044z68pqt2vx74uzzavzctds85l02a82rts49c0fj".to_string(),
+            destination_address: "tb1plh5v6etrv25qnlrda044z68pqt2vx74uzzavzctds85l02a82rts49c0fj".to_string(),
         };
 
         let initial_utxo = bitcoin::TxOut {
@@ -474,6 +479,7 @@ mod tests {
             fee_rate: 1,
             rune_id: "894897:128".to_string(),
             protocol_address: "bc1p_protocol_wallet".to_string(),
+            destination_address: "bc1p_human_receive_addr".to_string(),
         };
 
         // 1. Manually sign the manifest using the human key (for testing)
