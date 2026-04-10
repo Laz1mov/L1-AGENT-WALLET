@@ -17,6 +17,7 @@ use bitcoin::taproot::{LeafVersion, TaprootBuilder};
 use bitcoin::transaction::Version;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
 use serde::Deserialize;
+use base64::Engine;
 use std::env;
 use std::str::FromStr;
 
@@ -58,8 +59,7 @@ fn main() {
     
     let req: RecoveryRequest = serde_json::from_slice(&json_bytes).expect("Invalid JSON payload");
 
-    // ─── LEGACY LOGIC ───
-    // 1. Static Key from ENV (No HD)
+    // 1. Static Key from ENV
     let secret_hex = env::var("ENCLAVE_SECRET_KEY")
         .or_else(|_| env::var("ENCLAVE_SEED"))
         .expect("ENCLAVE_SECRET_KEY not set");
@@ -67,7 +67,7 @@ fn main() {
     let secp = Secp256k1::new();
     let sk = SecretKey::from_str(secret_hex.trim_matches(|c| c == '\'' || c == '"')).expect("Invalid secret key");
     let keypair = Keypair::from_secret_key(&secp, &sk);
-    let (internal_key, _) = keypair.x_only_public_key();
+    let (internal_key, _parity) = keypair.x_only_public_key();
 
     // 2. Master Human Key
     let master_pubkey_hex = env::var("MASTER_HUMAN_PUBKEY")
@@ -81,20 +81,51 @@ fn main() {
         .push_opcode(bitcoin::opcodes::all::OP_CHECKSIG)
         .into_script();
 
-    // 3. Force Legacy Depth 0
-    let spend_info = TaprootBuilder::new()
-        .add_leaf(0, recovery_script.clone())
-        .expect("Failed to add leaf")
-        .finalize(&secp, internal_key)
-        .expect("Failed to finalize");
-
     let network = network_from_env();
-    let agent_address = Address::p2tr(&secp, internal_key, spend_info.merkle_root(), network);
     
-    eprintln!("🏛️  LEGACY Agent Address: {}", agent_address);
-    eprintln!("🔑 Internal Key (Legacy): {}", internal_key);
+    // ─── FORENSIC DISCOVERY MODE ───
+    println!("\n🔍 SOVEREIGN FORENSIC DISCOVERY");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("🔑 Internal Key (Enclave Static): {}", internal_key);
+    println!("👤 Master Human Key:             {}", master_xonly);
+    println!("🌐 Active Network:                {:?}", network);
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    // 4. Build transaction
+    // Candidate A: BIP-86 (Key Path Only)
+    let addr_bip86 = Address::p2tr(&secp, internal_key, None, network);
+    println!("A [BIP-86 Key Path Only]:   {}", addr_bip86);
+
+    // Candidate B: Legacy MAST (1 Leaf @ Depth 0)
+    let spend_info_legacy = TaprootBuilder::new()
+        .add_leaf(0, recovery_script.clone())
+        .unwrap()
+        .finalize(&secp, internal_key)
+        .unwrap();
+    let addr_legacy = Address::p2tr(&secp, internal_key, spend_info_legacy.merkle_root(), network);
+    println!("B [Legacy MAST Depth 0]:    {}", addr_legacy);
+
+    // Candidate C: Hardened MAST (3 Leaves)
+    // Leaf 1: Empty (Allowance), Leaf 2: Empty (Whale), Leaf 3: Recovery
+    let dummy_script = ScriptBuf::new();
+    let spend_info_hardened = TaprootBuilder::new()
+        .add_leaf(1, dummy_script.clone()).unwrap() 
+        .add_leaf(1, dummy_script.clone()).unwrap()
+        .add_leaf(1, recovery_script.clone()).unwrap()
+        .finalize(&secp, internal_key)
+        .unwrap();
+    let addr_hardened = Address::p2tr(&secp, internal_key, spend_info_hardened.merkle_root(), network);
+    println!("C [Hardened MAST 3-Leaf]:   {}", addr_hardened);
+
+    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("If your target address bc1pzj... is listed above, copy its letter.");
+    println!("Currently generating PSBT for: B [LEGACY MAST DEPTH 0]");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+    // ─── Generate PSBT for Candidate B (Legacy) ───
+    let agent_address = addr_legacy;
+    let spend_info = spend_info_legacy;
+    
+    // Build transaction
     let dest_addr = Address::from_str(&req.destination).expect("Invalid dest").assume_checked();
     let mut tx = Transaction {
         version: Version::TWO,
@@ -124,7 +155,6 @@ fn main() {
 
     tx.output.push(TxOut { value: Amount::from_sat(send_amount), script_pubkey: dest_addr.script_pubkey() });
 
-    // 5. Build PSBT
     let mut psbt = Psbt::from_unsigned_tx(tx).unwrap();
     let control_block = spend_info.control_block(&(recovery_script.clone(), LeafVersion::TapScript)).unwrap();
 
@@ -137,7 +167,6 @@ fn main() {
         psbt.inputs[i].tap_key_origins.insert(master_xonly, (vec![tap_leaf_hash].into_iter().collect(), (bitcoin::bip32::Fingerprint::default(), bitcoin::bip32::DerivationPath::default())));
     }
 
-    use base64::Engine;
     println!("{}", base64::engine::general_purpose::STANDARD.encode(psbt.serialize()));
-    eprintln!("\n✅ LEGACY RECOVERY PSBT generated. Import into Sparrow to sign with master key.");
+    eprintln!("\n✅ PSBT generated. Import into Sparrow to sign with master key.");
 }
