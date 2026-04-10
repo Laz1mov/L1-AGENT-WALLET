@@ -4,6 +4,7 @@ import os
 import sys
 import hashlib
 import time
+import subprocess
 from typing import List, Dict, Optional
 
 # Add mcp-bridge to path
@@ -11,6 +12,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'mcp-bridge'))
 from bridge import EnclaveBridge
 
 from dotenv import load_dotenv
+
+# Project Root
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Load environment variables from the project root
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
@@ -40,6 +44,106 @@ def log_success(msg: str):
 
 def log_error(msg: str):
     print(f"{RED}❌ {msg}{RESET}")
+
+def audit_on_chain_exposure(address: str) -> bool:
+    """
+    Mandate 2: On-chain Witness Audit.
+    Rule: len(witness) > 1 means the script has been revealed (BURNED).
+    """
+    log_step(f"Auditing identity exposure for {address}...")
+    try:
+        # Fetch address transaction history (last 50 txs)
+        url = f"{API_URL}/address/{address}/txs"
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            log_error(f"Audit lookup failed (Status {response.status_code})")
+            return False
+            
+        txs = response.json()
+        for tx in txs:
+            if not tx.get("status", {}).get("confirmed"):
+                continue # Skip unconfirmed for deterministic audit
+                
+            for vin in tx.get('vin', []):
+                # Check if this input is spending from our address
+                if vin.get('prevout', {}).get('scriptpubkey_address') == address:
+                    witness = vin.get('witness', [])
+                    # Taproot Key Path spend = 1 element (Signature)
+                    # Taproot Script Path spend > 1 element (Sig + Script + ControlBlock)
+                    if len(witness) > 1:
+                        log_error(f"⚠️  IDENTITY COMPROMISED: Observed reveal at Tx {tx['txid']}")
+                        return True # 🚨 BURNED
+        log_success("Identity is pristine (Key Path only or unspent).")
+        return False
+    except Exception as e:
+        log_error(f"Audit Exception: {e}")
+        return False
+
+def rotate_identity():
+    """
+    Mandate 3: Auto-Rotation. Increment derivation index in .env.
+    """
+    dotenv_path = os.path.join(ROOT_DIR, '.env')
+    index = int(os.getenv("ENCLAVE_DERIVATION_INDEX", "0"))
+    new_index = index + 1
+    
+    log_step(f"🔄 ROTATING IDENTITY: Index {index} -> {new_index}")
+    
+    # Update .env file
+    with open(dotenv_path, 'r') as f:
+        lines = f.readlines()
+    
+    with open(dotenv_path, 'w') as f:
+        found = False
+        for line in lines:
+            if line.startswith("ENCLAVE_DERIVATION_INDEX="):
+                f.write(f"ENCLAVE_DERIVATION_INDEX='{new_index}'\n")
+                found = True
+            else:
+                f.write(line)
+        if not found:
+            f.write(f"ENCLAVE_DERIVATION_INDEX='{new_index}'\n")
+            
+    # Refresh local state
+    os.environ["ENCLAVE_DERIVATION_INDEX"] = str(new_index)
+    log_success(f"Identity rotated. Next batch will use Index {new_index}.")
+    
+    log_step("⏳ Waiting for Enclave to pick up the new identity...")
+    time.sleep(1)
+
+def restart_enclave():
+    """
+    Automates the Secure Enclave restart to pick up the new identity index.
+    """
+    log_step("🚀 AUTOMATED RESTART: Cycling Secure Enclave...")
+    
+    bin_path = os.path.join(ROOT_DIR, "enclave-signer", "target", "release", "enclave-signer")
+    if not os.path.exists(bin_path):
+        log_error("Enclave binary not found. Cannot automate restart.")
+        return False
+        
+    try:
+        # Kill existing
+        subprocess.run(["pkill", "-f", "enclave-signer"], capture_output=True)
+        time.sleep(1)
+        
+        # Start new in background (inheriting new ENV from .env)
+        # We use a detached process to ensure it lives after the script
+        with open(os.path.join(ROOT_DIR, "enclave-signer", "enclave.log"), "a") as log:
+            subprocess.Popen(
+                [bin_path],
+                stdout=log,
+                stderr=log,
+                cwd=os.path.join(ROOT_DIR, "enclave-signer"),
+                start_new_session=True
+            )
+        
+        time.sleep(2) # Give it time to bind to port 7777
+        log_success("Enclave restarted successfully with new Identity Index.")
+        return True
+    except Exception as e:
+        log_error(f"Restart failed: {e}")
+        return False
 
 def interactive_prompt(msg: str, default: str = "") -> str:
     prompt = f"{BOLD}{msg}{RESET}"
@@ -83,17 +187,46 @@ def run_batch_mint():
     if forced_addr:
         agent_address = forced_addr
         log_success(f"FORCED Agent Identity: {BOLD}{agent_address}{RESET}")
-    else:
-        policy_resp = bridge.get_policy()
-        if policy_resp.get("type") == "Error":
-            log_error(f"Enclave Error: {policy_resp.get('error')}")
-            return
-        agent_address = policy_resp.get("address")
-        log_success(f"Agent Identity: {BOLD}{agent_address}{RESET}")
+    # ─── IDENTITY AUDIT (MANDATE 2) ───
+    policy_resp = bridge.get_policy()
+    if policy_resp.get("type") == "Error":
+        log_error(f"Enclave Error: {policy_resp.get('error')}")
+        return
+    agent_address = policy_resp.get("address")
     
-    utxos = fetch_utxo(agent_address)
-    balance = sum(u['value'] for u in utxos)
-    log_success(f"Confirmed Balance: {BOLD}{balance} sats{RESET}")
+    # ⚡ VITAL FIX: Audit the specific address returned by the enclave
+    if audit_on_chain_exposure(agent_address):
+        log_error("CRITICAL: The current agent identity has been burned on-chain.")
+        rotate_identity()
+        
+        # ─── AUTOMATED RESTART ───
+        if restart_enclave():
+             # Reload the bridge and address
+             bridge = EnclaveBridge(port=ENCLAVE_PORT)
+             policy_resp = bridge.get_policy()
+             agent_address = policy_resp.get("address")
+             log_success(f"NEW PRISTINE IDENTITY ACTIVE: {BOLD}{agent_address}{RESET}")
+        else:
+            log_step("Please RESTART the Enclave server manually to pick up the new identity index.")
+            log_step("Terminating current batch to prevent unsafe minting.")
+            return
+    
+    log_success(f"Agent Identity: {BOLD}{agent_address}{RESET}")
+    
+    # ─── FUNDING HEARTBEAT ───
+    while True:
+        utxos = fetch_utxo(agent_address)
+        balance = sum(u['value'] for u in utxos)
+        log_success(f"Confirmed Balance: {BOLD}{balance} sats{RESET}")
+        
+        # We perform the estimate later, but we need a baseline check
+        if balance > 0:
+            break
+            
+        print(f"\n{YELLOW}⏳ WAITING FOR FUNDS...{RESET}")
+        print(f"Please send sats to: {BOLD}{agent_address}{RESET}")
+        print(f"I will check again in 20 seconds (Ctrl+C to abort)...")
+        time.sleep(20)
 
     # 2. Parameters
     # 🛡️ HARDCODED: OP•RETURN•WAR — The Sovereign Rune
@@ -127,23 +260,35 @@ def run_batch_mint():
     print(f"   Cost per Mint: ~{cost_per_tx} sats")
     print(f"   Total Required: {BOLD}{total_required} sats{RESET}")
     
-    if balance < total_required:
-        log_error(f"INSUFFICIENT FUNDS. You need {total_required - balance} more sats.")
-        log_step(f"Please send funds to: {BOLD}{agent_address}{RESET}")
-        return
+    # ─── BUDGET HEARTBEAT (MANDATE 2 & UX) ───
+    while True:
+        utxos = fetch_utxo(agent_address)
+        # Sort to find the best (largest) single UTXO
+        utxos = sorted(utxos, key=lambda x: x["value"], reverse=True)
+        
+        if not utxos:
+            log_error("Wallet is empty.")
+            current_best = 0
+        else:
+            current_best = utxos[0]["value"]
+            
+        if current_best >= total_required:
+            best_utxo = utxos[0]
+            log_success(f"Budget Verified: Primary UTXO {current_best} sats found.")
+            break
+            
+        diff = total_required - current_best
+        log_error(f"INSUFFICIENT BUDGET. Need a single UTXO of {total_required} sats.")
+        if current_best > 0:
+            log_warning(f"Your largest UTXO is {current_best} sats. You need {diff} more in a SINGLE output.")
+        
+        print(f"\n{YELLOW}⏳ WAITING FOR BUDGET COMPLETION...{RESET}")
+        print(f"Target Address: {BOLD}{agent_address}{RESET}")
+        print(f"Goal: {BOLD}{total_required}{RESET} sats in one transaction.")
+        print(f"Check interval: 20 seconds...")
+        time.sleep(20)
 
-    # 🛡️ ALIGNMENT: The Rust enclave sign_batch_chain logic ONLY supports a single initial UTXO.
-    # We must find a SINGLE UTXO big enough to fund the entire transaction, otherwise we need a manual consolidation.
-    utxos = sorted(utxos, key=lambda x: x["value"], reverse=True)
-    best_utxo = utxos[0]
-    
-    if best_utxo['value'] < total_required:
-        log_error(f"INSUFFICIENT SINGLE-UTXO FUNDS.")
-        log_error(f"Your largest UTXO is {best_utxo['value']} sats, but this batch requires {total_required} sats.")
-        log_step(f"You have two options:")
-        log_step(f"1. Reduce the batch size.")
-        log_step(f"2. Send a single transaction of {total_required} sats to {agent_address}.")
-        return
+    log_success(f"Selected Sovereign UTXO: {best_utxo['value']} sats for batch.")
 
     log_success(f"Selected Sovereign UTXO: {best_utxo['value']} sats for batch.")
 

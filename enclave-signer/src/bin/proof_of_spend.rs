@@ -8,19 +8,28 @@ use bitcoin::{
     Address, Amount, Network, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Witness,
     XOnlyPublicKey, absolute::LockTime, transaction::Version,
 };
-use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
+use secp256k1::{Keypair, Message, Secp256k1};
 use std::str::FromStr;
-
-#[path = "../policy.rs"]
-mod policy;
+use enclave_signer::signer;
+use enclave_signer::hd_wallet;
 
 fn main() {
     let secp = Secp256k1::new();
 
     // ── Keys ──
-    let enclave_sk_hex = std::env::var("ENCLAVE_SECRET_KEY")
-        .expect("🚨 ENCLAVE_SECRET_KEY must be set");
-    let enclave_sk = SecretKey::from_str(&enclave_sk_hex).unwrap();
+    let seed_hex = std::env::var("ENCLAVE_SEED")
+        .or_else(|_| std::env::var("ENCLAVE_SECRET_KEY"))
+        .expect("🚨 ENCLAVE_SEED or ENCLAVE_SECRET_KEY must be set");
+
+    let index = std::env::var("ENCLAVE_DERIVATION_INDEX")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse::<u32>()
+        .unwrap_or(0);
+
+    let network = signer::network_from_env();
+    let seed = hex::decode(seed_hex.trim_matches(|c| c == '\'' || c == '"')).expect("Invalid seed hex");
+    
+    let enclave_sk = hd_wallet::derive_enclave_key(&seed, index, network).unwrap();
     let enclave_kp = Keypair::from_secret_key(&secp, &enclave_sk);
     let (enclave_xonly, _) = enclave_kp.x_only_public_key();
 

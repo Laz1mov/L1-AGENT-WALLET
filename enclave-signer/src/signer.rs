@@ -47,10 +47,16 @@ pub struct EnclaveSigner {
 }
 
 impl EnclaveSigner {
-    pub fn new(secret_hex: &str) -> anyhow::Result<Self> {
+    /// Initializes a new EnclaveSigner using BIP-86 HD derivation.
+    /// Path: m/86'/0'/0'/0/index
+    pub fn new_hd(seed_hex: &str, index: u32, network: Network) -> anyhow::Result<Self> {
         let secp = Secp256k1::new();
-        let sk = SecretKey::from_str(secret_hex)?;
+        let seed = hex::decode(seed_hex.trim_matches(|c| c == '\'' || c == '"'))?;
+        
+        // 👁️ DYNAMIC DERIVATION: Phase 1 Rust Implementation
+        let sk = crate::hd_wallet::derive_enclave_key(&seed, index, network)?;
         let keypair = Keypair::from_secret_key(&secp, &sk);
+        
         Ok(Self { secp, keypair })
     }
 
@@ -357,11 +363,11 @@ pub struct BatchManifest {
 mod tests {
     use super::*;
 
-    // Deterministic test key — never use on mainnet.
-    const TEST_KEY: &str = "4c088321c1a1664d5ed703c90715403328e9c60e76742512140d34190c743841";
+    // Deterministic test key (32 bytes entropy used as seed)
+    const TEST_SEED: &str = "5eb00b5a509e5680188b4793836d33f2a8a1ed9338f0dca3065d6447849e757a";
 
     fn test_signer() -> EnclaveSigner {
-        EnclaveSigner::new(TEST_KEY).unwrap()
+        EnclaveSigner::new_hd(TEST_SEED, 0, Network::Bitcoin).unwrap()
     }
 
     #[test]

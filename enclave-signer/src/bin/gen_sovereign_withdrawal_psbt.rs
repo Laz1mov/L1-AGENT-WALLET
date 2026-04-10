@@ -28,7 +28,9 @@ use bitcoin::{
 use bitcoin::absolute::LockTime;
 use bitcoin::taproot::{LeafVersion, TaprootBuilder};
 use bitcoin::transaction::Version;
-use secp256k1::{Keypair, Secp256k1, SecretKey};
+use enclave_signer::signer;
+use enclave_signer::hd_wallet;
+use secp256k1::{Keypair, Secp256k1};
 use serde::Deserialize;
 use std::env;
 use std::str::FromStr;
@@ -75,9 +77,20 @@ fn main() {
         serde_json::from_slice(&json_bytes).expect("Invalid JSON payload");
 
     // 2. Load enclave identity (to reconstruct the Taproot tree)
-    let secret_hex = env::var("ENCLAVE_SECRET_KEY").expect("ENCLAVE_SECRET_KEY not set");
+    let seed_hex = env::var("ENCLAVE_SEED")
+        .or_else(|_| env::var("ENCLAVE_SECRET_KEY"))
+        .expect("ENCLAVE_SEED or ENCLAVE_SECRET_KEY not set");
+    
+    let index = env::var("ENCLAVE_DERIVATION_INDEX")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse::<u32>()
+        .unwrap_or(0);
+
+    let network = signer::network_from_env();
+    let seed = hex::decode(seed_hex.trim_matches(|c| c == '\'' || c == '"')).expect("Invalid seed hex");
+    
     let secp = Secp256k1::new();
-    let sk = SecretKey::from_str(&secret_hex).expect("Invalid secret key");
+    let sk = hd_wallet::derive_enclave_key(&seed, index, network).expect("Failed to derive enclave key");
     let keypair = Keypair::from_secret_key(&secp, &sk);
     let (internal_key, _) = keypair.x_only_public_key();
 

@@ -138,6 +138,15 @@ time.sleep(1)
 
 # 🛡️ Ensure the enclave inherits the correct identity from .env
 enclave_env = os.environ.copy()
+
+# Ensure ENCLAVE_DERIVATION_INDEX is set
+if "ENCLAVE_DERIVATION_INDEX" not in enclave_env:
+    log_status("Initializing Caméléon Derivation Index to 0...")
+    enclave_env["ENCLAVE_DERIVATION_INDEX"] = "0"
+
+# Map ENCLAVE_SECRET_KEY to ENCLAVE_SEED if needed for legacy compatibility
+if "ENCLAVE_SECRET_KEY" in enclave_env and "ENCLAVE_SEED" not in enclave_env:
+    enclave_env["ENCLAVE_SEED"] = enclave_env["ENCLAVE_SECRET_KEY"]
 enclave_env["MASTER_HUMAN_PUBKEY"] = human_pubkey
 enclave_env["BITCOIN_NETWORK"] = "mainnet"
 # ENCLAVE_SECRET_KEY should already be in os.environ via .env or export

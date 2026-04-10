@@ -1,13 +1,9 @@
-mod policy;
-mod runes_forge;
-mod signer;
-mod simplicity_engine;
-
+use enclave_signer::policy::{SovereignPolicy, SpendingPolicy};
+use enclave_signer::signer::{self, EnclaveSigner, BatchManifest};
+use enclave_signer::simplicity_engine::SimplicityEngine;
 use base64::{engine::general_purpose, Engine as _};
 use bitcoin::{Psbt, Witness, Address, Network};
-use policy::{SovereignPolicy, SpendingPolicy};
 use serde::{Deserialize, Serialize};
-use signer::EnclaveSigner;
 use log::{info, warn, error};
 use std::path::Path;
 use std::str::FromStr;
@@ -49,10 +45,20 @@ const POLICY_FILE: &str = "policy.json";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     env_logger::init();
-    let secret_key = std::env::var("ENCLAVE_SECRET_KEY")
-        .expect("🚨 ENCLAVE_SECRET_KEY must be set. Export it or add it to .env");
-    let signer = Arc::new(EnclaveSigner::new(&secret_key)?);
+    let seed_hex = std::env::var("ENCLAVE_SEED")
+        .or_else(|_| std::env::var("ENCLAVE_SECRET_KEY"))
+        .expect("🚨 ENCLAVE_SEED or ENCLAVE_SECRET_KEY must be set");
+
+    let index = std::env::var("ENCLAVE_DERIVATION_INDEX")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse::<u32>()
+        .unwrap_or(0);
+
+    let network = signer::network_from_env();
+    let signer = Arc::new(EnclaveSigner::new_hd(&seed_hex, index, network)?);
+    info!("🛡️  [ENCLAVE] Sovereign Signer active (BIP-86 Index: {})", index);
     let listener = TcpListener::bind("0.0.0.0:7777").await?;
     info!("🛡️  [ENCLAVE] Sovereign Signer active on 0.0.0.0:7777");
 
@@ -146,8 +152,9 @@ async fn handle_sign_transaction(signer: &EnclaveSigner, request: SignRequest) -
         }
     }
 
-    if let Err(e) = simplicity_engine::SimplicityEngine::execute_allowance_contract(&psbt, policy.allowance_sats) {
-        return error_response(&e.to_string());
+    if let Err(e) = SimplicityEngine::execute_allowance_contract(&psbt, policy.allowance_sats) {
+        let err_msg: String = e.to_string();
+        return error_response(&err_msg);
     }
 
     let tx = &psbt.unsigned_tx;
