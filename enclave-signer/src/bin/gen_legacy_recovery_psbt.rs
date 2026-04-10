@@ -105,12 +105,19 @@ fn main() {
     println!("B [Legacy MAST Depth 0]:    {}", addr_legacy);
 
     // Candidate C: Hardened MAST (3 Leaves)
-    // Leaf 1: Empty (Allowance), Leaf 2: Empty (Whale), Leaf 3: Recovery
-    let dummy_script = ScriptBuf::new();
+    // Structure: Leaf 1 (Depth 1), Leaf 2 (Depth 2), Leaf 3 (Depth 2)
+    // We use the Genesis default scripts to ensure the Merkle Root matches.
+    let allowance_script = ScriptBuf::new(); // Default allowance was empty/fallback
+    let whale_script = ScriptBuf::builder()
+        .push_slice(internal_key.serialize()) // Enclave
+        .push_slice(master_xonly.serialize())  // Master
+        .push_opcode(bitcoin::opcodes::all::OP_CHECKMULTISIG) // Legacy 2-of-2 logic
+        .into_script();
+
     let spend_info_hardened = TaprootBuilder::new()
-        .add_leaf(1, dummy_script.clone()).unwrap() 
-        .add_leaf(1, dummy_script.clone()).unwrap()
-        .add_leaf(1, recovery_script.clone()).unwrap()
+        .add_leaf(1, allowance_script.clone()).unwrap() 
+        .add_leaf(2, whale_script.clone()).unwrap()
+        .add_leaf(2, recovery_script.clone()).unwrap()
         .finalize(&secp, internal_key)
         .unwrap();
     let addr_hardened = Address::p2tr(&secp, internal_key, spend_info_hardened.merkle_root(), network);
@@ -118,12 +125,12 @@ fn main() {
 
     println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("If your target address bc1pzj... is listed above, copy its letter.");
-    println!("Currently generating PSBT for: B [LEGACY MAST DEPTH 0]");
+    println!("Currently generating PSBT for: C [HARDENED MAST 3-LEAF]");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-    // ─── Generate PSBT for Candidate B (Legacy) ───
-    let agent_address = addr_legacy;
-    let spend_info = spend_info_legacy;
+    // ─── Generate PSBT for Candidate C (Hardened) ───
+    let agent_address = addr_hardened;
+    let spend_info = spend_info_hardened;
     
     // Build transaction
     let dest_addr = Address::from_str(&req.destination).expect("Invalid dest").assume_checked();
