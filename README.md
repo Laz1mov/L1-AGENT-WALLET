@@ -138,15 +138,41 @@ The Ape is sovereign, but it follows the jungle code:
 
 ---
 
-##  IV. CONTROL COCKPIT (The Handshake)
-
 1.  **The Quote**: The Ape tells you the price.
 2.  **The Mandate**: You get a **Hash**. You sign it with your wallet (Unisat/Xverse/Ledger).
 3.  **The Sweep**: You paste the **ECDSA Signature**. The Ape unleashes up to 25-tx Rafale.
 
 ---
 
-⚡ JOIN THE VANGUARD
+## 🦾 V. SOVEREIGN MCP (Claude Code Integration)
+
+You can now command the Agent directly through **Claude Code** using the `sovereign-intel` MCP bridge. This transforms your AI assistant into a tactical Bitcoin commander.
+
+### 🔌 Setup
+1. **Initialize the MCP**:
+   Claude Code will automatically detect the local `claude.json` configuration. Ensure the Enclave is running on port `7777`.
+2. **Permissions**:
+   Allow Claude Code to read from `.claude/mcp.json` to authorize the tools.
+
+### 🦍 THE APE/DEGEN PROTOCOL (Keywords)
+The Agent is trained to respond to high-velocity tactical keywords:
+
+- **`RADAR`**: Instantly audits your Agent's address, balance, and current mempool fee rates.
+- **`STRIKE [X] [RUNE_ID] to [ADDRESS]`**: Prepares a batch mint.
+  - *Example*: `STRIKE 5 WAR to bc1p...`
+  - *Output*: Generates a deterministic JSON manifest.
+- **`LFG [SIGNATURE]`**: Executes the signature injection and broadcasts the batch to the Timechain.
+
+### 🛡️ MANDATE SAFETY (No Wrapping)
+Terminal displays often break long Bitcoin addresses with visual line-breaks, which **corrupts signatures**. 
+To fix this, the MCP server automatically writes the strictly-formatted manifest to:
+👉 **`MANDATE.json`** (at the root of the project).
+
+**Protocol**: Always copy the JSON from `MANDATE.json` before signing in your wallet to ensure 100% cryptographic alignment.
+
+---
+
+## ⚡ VI. JOIN THE VANGUARD
 The machine is ready. The logic is verified. The BOSS is back. Are you going to keep signing transactions manually like it’s 2013, or are you ready for autonomous execution?
 
 ⭐ Star the repo: Feed the algorithm and spread the Sovereign word.

@@ -37,6 +37,16 @@
         "ENCLAVE_HOST": "127.0.0.1",
         "ENCLAVE_PORT": "7777"
       }
+    },
+    "sovereign-intel": {
+      "description": "Serveur MCP de renseignement READ-ONLY. Solde, UTXOs, frais, statut de TX, politique de gouvernance. Aucun outil d'exécution ou de signature.",
+      "transport": "stdio",
+      "command": "python3",
+      "args": ["mcp-bridge/intelligence_server.py"],
+      "env": {
+        "ENCLAVE_HOST": "127.0.0.1",
+        "ENCLAVE_PORT": "7777"
+      }
     }
   },
   "tools": [

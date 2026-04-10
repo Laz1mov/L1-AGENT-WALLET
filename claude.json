@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sovereign-intel": {
+      "command": "/Users/4n1s/Documents/GitHub/agent-bitcoin-wallet/agent-gateway/venv/bin/python3",
+      "args": [
+        "/Users/4n1s/Documents/GitHub/agent-bitcoin-wallet/mcp-bridge/intelligence_server.py"
+      ],
+      "env": {
+        "ENCLAVE_HOST": "127.0.0.1",
+        "ENCLAVE_PORT": "7777"
+      }
+    }
+  }
+}

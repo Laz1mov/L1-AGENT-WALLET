@@ -42,6 +42,8 @@ bridge.log
 .claw/
 .gemini/
 .MCP/
+MANDATE.json
+.claudeprompt
 node_modules/
 bun.lock
 
