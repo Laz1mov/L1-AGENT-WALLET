@@ -30,6 +30,20 @@ fn main() {
 "#;
 
 impl SimplicityEngine {
+    /// Returns the Taproot leaf script anchor for the Allowance contract.
+    pub fn get_allowance_script() -> bitcoin::ScriptBuf {
+        bitcoin::script::Builder::new()
+            .push_slice(b"simplicity_allowance_v1")
+            .into_script()
+    }
+
+    /// Returns the Taproot leaf script anchor for the Governance contract.
+    pub fn get_governance_script() -> bitcoin::ScriptBuf {
+        bitcoin::script::Builder::new()
+            .push_slice(b"simplicity_governance_v1")
+            .into_script()
+    }
+
     /// Executes a Simplicity program loaded from disk or internal fallback against a PSBT.
     pub fn execute_allowance_contract(psbt: &bitcoin::Psbt, allowance_limit: u64) -> Result<()> {
         let path = Self::resolve_contract_path("allowance.simf");

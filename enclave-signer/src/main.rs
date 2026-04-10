@@ -162,19 +162,35 @@ async fn handle_sign_transaction(signer: &EnclaveSigner, request: SignRequest) -
 
     let mut msg_hash = [0u8; 32];
     msg_hash.copy_from_slice(sighash.as_ref());
-    let sig = signer.sign_schnorr(msg_hash, spend_info.merkle_root());
+    let raw_sig = signer.sign_schnorr(msg_hash, spend_info.merkle_root());
 
-    SignResponse {
-        response_type: "Signature".to_string(),
-        address: Some(signer.get_taproot_address(&policy)),
-        script_pubkey_hex: Some(hex::encode(signer.get_script_pubkey(&policy))),
-        signature_hex: Some(hex::encode(sig.as_ref())),
-        signed_psbt_base64: Some(psbt_b64),
-        signed_batch_psbts: None,
-        txid: None,
-        raw_hex: None,
-        policy: Some(policy),
-        error: None,
+    // 🛡️ FINALIZE: Embed signature and extract raw hex
+    let sig = bitcoin::taproot::Signature {
+        signature: raw_sig,
+        sighash_type: bitcoin::sighash::TapSighashType::All,
+    };
+    psbt.inputs[0].tap_key_sig = Some(sig);
+
+    let mut witness = Witness::new();
+    let mut sig_wit = raw_sig.as_ref().to_vec();
+    sig_wit.push(0x01); // SIGHASH_ALL
+    witness.push(sig_wit);
+    psbt.inputs[0].final_script_witness = Some(witness);
+
+    match psbt.clone().extract_tx() {
+        Ok(tx) => SignResponse {
+            response_type: "Signature".to_string(),
+            address: Some(signer.get_taproot_address(&policy)),
+            script_pubkey_hex: Some(hex::encode(signer.get_script_pubkey(&policy))),
+            signature_hex: Some(hex::encode(raw_sig.as_ref())),
+            signed_psbt_base64: Some(general_purpose::STANDARD.encode(psbt.serialize())),
+            signed_batch_psbts: None,
+            txid: Some(tx.compute_txid().to_string()),
+            raw_hex: Some(hex::encode(bitcoin::consensus::serialize(&tx))),
+            policy: Some(policy),
+            error: None,
+        },
+        Err(e) => error_response(&format!("Tx Extraction Error: {}", e)),
     }
 }
 

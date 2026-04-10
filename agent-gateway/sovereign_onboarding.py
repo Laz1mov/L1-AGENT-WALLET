@@ -90,6 +90,7 @@ set_key(ENV_PATH, "ENCLAVE_PORT", "7777")
 
 # 🔑 ENCLAVE SECRET KEY: Auto-generate if not already set
 import secrets
+load_dotenv(ENV_PATH) # Refetch from disk to see manual edits
 existing_key = os.getenv("ENCLAVE_SECRET_KEY", "").strip("'\"")
 if existing_key and len(existing_key) == 64:
     log_success(f"Enclave Secret Key: EXISTS (reusing sealed identity)")
@@ -131,7 +132,9 @@ log_success("All binaries identified. Ready to boot.")
 log_header("🚀 INITIALIZING ENCLAVE IDENTITY")
 
 # Start Enclave Signer in the background
-log_status("Spinning up the Secure Enclave (Port 7777)...")
+log_status("Cleaning up port 7777 and spinning up the Secure Enclave...")
+subprocess.run(["pkill", "-f", BIN_PATH], capture_output=True)
+time.sleep(1)
 
 # 🛡️ Ensure the enclave inherits the correct identity from .env
 enclave_env = os.environ.copy()
@@ -253,12 +256,20 @@ try:
     b64_req = base64.b64encode(json.dumps(req).encode()).decode()
     gen_psbt_bin = os.path.join(ROOT_DIR, "enclave-signer", "target", "release", "gen_live_psbt")
     
+    # Fallback to debug if release is missing (unlikely now)
+    if not os.path.exists(gen_psbt_bin):
+        gen_psbt_bin = os.path.join(ROOT_DIR, "enclave-signer", "target", "debug", "gen_live_psbt")
+        
     psbt_result = subprocess.run([gen_psbt_bin, b64_req], capture_output=True, text=True, env=env)
     if psbt_result.returncode != 0:
         log_error(f"Forge failed: {psbt_result.stderr}")
         sys.exit(1)
         
     psbt_b64 = psbt_result.stdout.strip()
+    if not psbt_b64:
+        log_error("Forge produced an EMPTY PSBT. This usually means the binary is outdated or inputs are invalid.")
+        sys.exit(1)
+
     log_status("Signing Baptismal transaction...")
     
     sign_resp = bridge.sign_transaction(psbt_b64)

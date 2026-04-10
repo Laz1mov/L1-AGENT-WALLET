@@ -118,6 +118,21 @@ def run_batch_mint():
         log_step(f"Please send funds to: {BOLD}{agent_address}{RESET}")
         return
 
+    # 🛡️ ALIGNMENT: The Rust enclave sign_batch_chain logic ONLY supports a single initial UTXO.
+    # We must find a SINGLE UTXO big enough to fund the entire transaction, otherwise we need a manual consolidation.
+    utxos = sorted(utxos, key=lambda x: x["value"], reverse=True)
+    best_utxo = utxos[0]
+    
+    if best_utxo['value'] < total_required:
+        log_error(f"INSUFFICIENT SINGLE-UTXO FUNDS.")
+        log_error(f"Your largest UTXO is {best_utxo['value']} sats, but this batch requires {total_required} sats.")
+        log_step(f"You have two options:")
+        log_step(f"1. Reduce the batch size.")
+        log_step(f"2. Send a single transaction of {total_required} sats to {agent_address}.")
+        return
+
+    log_success(f"Selected Sovereign UTXO: {best_utxo['value']} sats for batch.")
+
     # 3. Create Manifest
     log_step("Forging Master Mandate Manifest...")
     batch_id = hashlib.sha256(str(time.time()).encode()).hexdigest()[:12]
@@ -153,8 +168,8 @@ def run_batch_mint():
     # 4. Enclave Signing
     log_step("Executing Sovereignty: Requesting Enclave Signature Chain...")
     
-    # We must consolidate ALL UTXOs into the first PSBT
-    utxo_args = " ".join([f"{u['txid']}:{u['vout']}:{u['value']}" for u in utxos])
+    # We use the largest single UTXO for the batching sequence
+    utxo_args = f"{best_utxo['txid']}:{best_utxo['vout']}:{best_utxo['value']}"
     dummy_cmd = f"cd enclave-signer && cargo run --release --bin gen_recovery_psbt -- {agent_address} {agent_address} 1000 {utxo_args}"
     
     import subprocess

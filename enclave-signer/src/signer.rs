@@ -58,17 +58,39 @@ impl EnclaveSigner {
     pub fn get_taproot_info(&self, policy: &crate::policy::SovereignPolicy) -> TaprootSpendInfo {
         let (internal_key, _parity) = self.keypair.x_only_public_key();
         
-        // 🛡️ RECOVERY PATH (Leaf 3): The Human Master's recovery script.
-        // We use depth 0 for now as it's the only leaf in our current MAST design.
-        let recovery_script = policy.recovery_policy.to_script()
-            .unwrap_or_else(|_| ScriptBuf::new()); // Fallback to empty if invalid
+        // 🧪 IDENTITY TOGGLE: Legacy vs Hardened
+        let legacy_mode = std::env::var("ENCLAVE_LEGACY_MODE")
+            .unwrap_or_default() == "true";
 
-        let builder = TaprootBuilder::new()
-            .add_leaf(0, recovery_script)
-            .expect("Failed to add recovery leaf to Taproot tree");
+        if legacy_mode {
+            // 🏹 LEGACY MODE (Yesterday's bc1pv3k... identity)
+            let recovery_script = policy.recovery_policy.to_script()
+                .unwrap_or_else(|_| ScriptBuf::new());
+
+            let builder = TaprootBuilder::new()
+                .add_leaf(0, recovery_script)
+                .expect("Failed to add recovery leaf in Legacy mode");
+                
+            builder.finalize(&self.secp, internal_key)
+                .expect("Failed to finalize Legacy Taproot")
+        } else {
+            // 🛡️ HARDENED MODE (Full Sovereign Identity: bc1plh5...)
+            let recovery_script = policy.recovery_policy.to_script()
+                .unwrap_or_else(|_| ScriptBuf::new());
             
-        builder.finalize(&self.secp, internal_key)
-            .expect("Failed to finalize Taproot tree")
+            // Simplicity Contracts (Hardcoded or Internal)
+            let allowance_script = crate::simplicity_engine::SimplicityEngine::get_allowance_script();
+            let governance_script = crate::simplicity_engine::SimplicityEngine::get_governance_script();
+
+            // Structure: Master (D1) | [Allowance (D2) | Governance (D2)]
+            let builder = TaprootBuilder::new()
+                .add_leaf(1, recovery_script).expect("Failed to add recovery leaf")
+                .add_leaf(2, allowance_script).expect("Failed to add allowance leaf")
+                .add_leaf(2, governance_script).expect("Failed to add governance leaf");
+
+            builder.finalize(&self.secp, internal_key)
+                .expect("Failed to finalize Hardened Taproot")
+        }
     }
 
     /// Returns the Taproot (P2TR) address for the given network, tweaked by the policy tree.
@@ -161,7 +183,11 @@ impl EnclaveSigner {
                 let recovered_pubkey = self.secp.recover_ecdsa(&msg, &recoverable_sig)?;
                 let (recovered_xonly, _) = recovered_pubkey.x_only_public_key();
                 
-                let expected_xonly = XOnlyPublicKey::from_str(master_pubkey_hex)?;
+                let expected_xonly = if master_pubkey_hex.len() == 66 && (master_pubkey_hex.starts_with("02") || master_pubkey_hex.starts_with("03")) {
+                    XOnlyPublicKey::from_str(&master_pubkey_hex[2..])?
+                } else {
+                    XOnlyPublicKey::from_str(master_pubkey_hex)?
+                };
                 
                 if recovered_xonly != expected_xonly {
                     anyhow::bail!("ECDSA Mandate Mismatch: Expected {}, recovered {}", expected_xonly, recovered_xonly);
@@ -172,7 +198,11 @@ impl EnclaveSigner {
 
         // 3. Fallback to Schnorr (Hex) - Raw BIP-340
         let sig_bytes = hex::decode(signature_str)?;
-        let pubkey = XOnlyPublicKey::from_str(master_pubkey_hex)?;
+        let pubkey = if master_pubkey_hex.len() == 66 && (master_pubkey_hex.starts_with("02") || master_pubkey_hex.starts_with("03")) {
+            XOnlyPublicKey::from_str(&master_pubkey_hex[2..])?
+        } else {
+            XOnlyPublicKey::from_str(master_pubkey_hex)?
+        };
         let signature = Signature::from_slice(&sig_bytes)?;
         
         let msg_hash = sha2::Sha256::digest(serialized.as_bytes());

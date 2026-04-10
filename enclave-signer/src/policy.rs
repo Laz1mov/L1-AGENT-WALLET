@@ -18,7 +18,9 @@ impl SpendingPolicy {
         use bitcoin::opcodes::all::OP_CHECKSIG;
         match self {
             SpendingPolicy::SingleSig { pubkey } => {
-                let xpk = XOnlyPublicKey::from_str(pubkey)
+                // Ensure we use the x-only part (last 64 chars if 66 provided)
+                let cleaned_pubkey = if pubkey.len() == 66 { &pubkey[2..] } else { pubkey };
+                let xpk = XOnlyPublicKey::from_str(cleaned_pubkey)
                     .map_err(|e| anyhow::anyhow!("Invalid x-only pubkey: {}", e))?;
                 
                 // Taproot leaf script: <32-byte-x-only-pubkey> OP_CHECKSIG
