@@ -92,22 +92,41 @@ This is not a toy. This is high-stakes jungle warfare.
    pip install -r requirements.txt
    python3 agent-gateway/sovereign_onboarding.py
    ```
-   > This auto-generates your `ENCLAVE_SECRET_KEY`, boots the Enclave,
-   > derives your MAST address, and performs the Baptism mint.
+   > This auto-generates your `ENCLAVE_SEED`, boots the Enclave,
+   > derives your first BIP-86 MAST address (Index 0).
 
 3. **Ready to Ape? Batch Mint**:
    ```bash
    python3 scripts/sovereign_batch_mint.py
    ```
-   > Signs OP•RETURN•WAR Runes via the Enclave's Taproot MAST key path.
+   > Signs Runes via the Enclave's Taproot MAST key path.
+   > Now featuring **On-Chain Identity Auditing**.
 
-4. **Manual Enclave Boot (Advanced)**:
-   ```bash
-   export ENCLAVE_SECRET_KEY="your_key_from_env"
-   export MASTER_HUMAN_PUBKEY="your_xonly_pubkey"
-   export BITCOIN_NETWORK=mainnet
-   cd enclave-signer && ./target/release/enclave-signer
-   ```
+---
+
+## 👁️🛡️ THE CAMÉLÉON RITUAL (Identity Rotation)
+
+The L1-Agent is a moving target. To maintain forward secrecy, the Agent detects when its vault script has been revealed (Burned) and autonomously rotates its identity.
+
+### The 3-Step Validation Cycle:
+
+1.  **INIT (Onboarding)**:
+    `python3 agent-gateway/sovereign_onboarding.py`  
+    Launch the Enclave and fund its first identity (**Index 0**).
+
+2.  **THE BURN (Recovery)**:
+    `python3 scripts/sovereign_withdrawal.py`  
+    Simulate an emergency manual exit. This uses the **Script Path**, revealing the recovery logic to the Timechain. Your Index 0 identity is now **BURNED**.
+
+3.  **THE METAMORPHOSIS (Rotation)**:
+    `python3 scripts/sovereign_batch_mint.py`  
+    Launch the orchestrator. The Agent will:
+    *   Audit the Timechain and detect the revealed script.
+    *   **Trigger Rotation**: Increment the index to **Index 1**.
+    *   **Auto-Restart**: Cycle the enclave and present a fresh, unrevealed address.
+
+### 💓 Funding Heartbeat
+If the Agent's vault is empty or insufficient, it won't crash. It stays alive, pulsing every 20 seconds, waiting for you to feed the new address. As soon as sats arrive, it executes the mission.
 
 
 ##  THE BANANA TAX (Hardcoded Governance)
