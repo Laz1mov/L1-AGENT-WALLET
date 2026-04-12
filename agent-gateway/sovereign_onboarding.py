@@ -42,6 +42,110 @@ def log_header(msg: str):
     print(f"       {msg}")
     print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{RESET}\n")
 
+
+def _read_varint(data: bytes, offset: int):
+    prefix = data[offset]
+    offset += 1
+    if prefix < 0xfd:
+        return prefix, offset
+    if prefix == 0xfd:
+        return int.from_bytes(data[offset:offset + 2], "little"), offset + 2
+    if prefix == 0xfe:
+        return int.from_bytes(data[offset:offset + 4], "little"), offset + 4
+    return int.from_bytes(data[offset:offset + 8], "little"), offset + 8
+
+
+def _decode_op_return(script_hex: str) -> str:
+    try:
+        b = bytes.fromhex(script_hex)
+        if not b or b[0] != 0x6a:
+            return script_hex
+        i = 1
+        chunks = []
+        while i < len(b):
+            op = b[i]
+            i += 1
+            if op <= 75 and i + op <= len(b):
+                chunks.append(b[i:i + op])
+                i += op
+            else:
+                break
+        msg = b"".join(chunks)
+        return msg.decode("utf-8", errors="replace") or script_hex
+    except Exception:
+        return script_hex
+
+
+def decode_tx_hex(raw_hex: str) -> str:
+    raw_hex = raw_hex.strip()
+    data = bytes.fromhex(raw_hex)
+    o = 0
+    lines = []
+
+    def add_kv(label: str, value: str):
+        lines.append(f"{label:<12}: {value}")
+
+    version = int.from_bytes(data[o:o + 4], "little")
+    o += 4
+    add_kv("Version", str(version))
+    add_kv("Raw size", f"{len(data)} bytes")
+
+    segwit = len(data) > o + 1 and data[o] == 0 and data[o + 1] == 1
+    if segwit:
+        o += 2
+        add_kv("SegWit", "yes")
+    else:
+        add_kv("SegWit", "no")
+
+    vin_count, o = _read_varint(data, o)
+    add_kv("Inputs", str(vin_count))
+    lines.append("")
+    lines.append("INPUTS")
+    lines.append("-" * 72)
+    for i in range(vin_count):
+        prev_txid = data[o:o + 32][::-1].hex(); o += 32
+        vout = int.from_bytes(data[o:o + 4], "little"); o += 4
+        script_len, o = _read_varint(data, o)
+        script_sig = data[o:o + script_len].hex(); o += script_len
+        sequence = data[o:o + 4].hex(); o += 4
+        lines.append(f"[{i}] {prev_txid}:{vout}")
+        lines.append(f"    scriptSig : {script_sig or '(empty)'}")
+        lines.append(f"    sequence  : {sequence}")
+        lines.append("")
+
+    vout_count, o = _read_varint(data, o)
+    add_kv("Outputs", str(vout_count))
+    lines.append("")
+    lines.append("OUTPUTS")
+    lines.append("-" * 72)
+    for i in range(vout_count):
+        value_sats = int.from_bytes(data[o:o + 8], "little"); o += 8
+        spk_len, o = _read_varint(data, o)
+        spk = data[o:o + spk_len].hex(); o += spk_len
+        value_btc = value_sats / 100_000_000
+        lines.append(f"[{i}] {value_sats:,} sats  ({value_btc:.8f} BTC)")
+        lines.append(f"    scriptPubKey: {spk}")
+        if spk.startswith("6a"):
+            lines.append(f"    OP_RETURN   : {_decode_op_return(spk)}")
+        lines.append("")
+
+    if segwit:
+        lines.append("WITNESS")
+        lines.append("-" * 72)
+        for i in range(vin_count):
+            items, o = _read_varint(data, o)
+            lines.append(f"[{i}] items: {items}")
+            for j in range(items):
+                item_len, o = _read_varint(data, o)
+                item = data[o:o + item_len].hex(); o += item_len
+                lines.append(f"    [{j}] {item}")
+            lines.append("")
+
+    locktime = int.from_bytes(data[o:o + 4], "little")
+    add_kv("Locktime", str(locktime))
+    return "\n".join(lines)
+
+
 # Load environment
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(ROOT_DIR, ".env")
@@ -289,6 +393,32 @@ try:
     log_success("Transaction SIGNED autonomously by Enclave.")
     txid = sign_resp.get("txid", "N/A")
     raw_hex = sign_resp.get("raw_hex", "")
+
+    if not raw_hex:
+        log_error("Signing returned no raw transaction hex. Cannot preview or broadcast safely.")
+        sys.exit(1)
+
+    # ── Human-readable verification preview ──────────────────────────────────
+    preview_text = []
+    preview_text.append("SOVEREIGN ONBOARDING — TX PREVIEW")
+    preview_text.append("=" * 72)
+    preview_text.append(f"TXID : {txid}")
+    preview_text.append("")
+    preview_text.append(decode_tx_hex(raw_hex))
+    preview_text.append("")
+    preview_text.append("RAW HEX")
+    preview_text.append("-" * 72)
+    preview_text.append(raw_hex)
+    preview_text.append("=" * 72)
+    preview_text.append("")
+
+    preview_file = os.path.join(ROOT_DIR, "onboarding_tx_preview.txt")
+    with open(preview_file, "w") as f:
+        f.write("\n".join(preview_text))
+
+    print(f"\n{BOLD}{GOLD}📋 TX VERIFICATION PREVIEW{RESET}")
+    print(f"Saved to: {BOLD}{preview_file}{RESET}\n")
+    print("\n".join(preview_text))
 
     # Broadcast (Optional: let user decide if it's real Mainnet BTC)
     confirm_broadcast = input(f"\nBroadcast to MAINNET now? (y/n):\n> ").strip().lower()

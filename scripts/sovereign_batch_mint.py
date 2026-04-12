@@ -152,6 +152,110 @@ def interactive_prompt(msg: str, default: str = "") -> str:
     val = input(f"{prompt}: ").strip()
     return val if val else default
 
+
+def _read_varint(data: bytes, offset: int):
+    prefix = data[offset]
+    offset += 1
+    if prefix < 0xfd:
+        return prefix, offset
+    if prefix == 0xfd:
+        return int.from_bytes(data[offset:offset + 2], "little"), offset + 2
+    if prefix == 0xfe:
+        return int.from_bytes(data[offset:offset + 4], "little"), offset + 4
+    return int.from_bytes(data[offset:offset + 8], "little"), offset + 8
+
+
+def _decode_op_return(script_hex: str) -> str:
+    try:
+        b = bytes.fromhex(script_hex)
+        if not b or b[0] != 0x6a:
+            return script_hex
+        i = 1
+        chunks = []
+        while i < len(b):
+            op = b[i]
+            i += 1
+            if op <= 75 and i + op <= len(b):
+                chunks.append(b[i:i + op])
+                i += op
+            else:
+                break
+        msg = b"".join(chunks)
+        return msg.decode("utf-8", errors="replace") or script_hex
+    except Exception:
+        return script_hex
+
+
+def decode_tx_hex(raw_hex: str) -> str:
+    raw_hex = raw_hex.strip()
+    data = bytes.fromhex(raw_hex)
+    o = 0
+    lines = []
+
+    def add_kv(label: str, value: str):
+        lines.append(f"{label:<12}: {value}")
+
+    version = int.from_bytes(data[o:o + 4], "little")
+    o += 4
+    add_kv("Version", str(version))
+    add_kv("Raw size", f"{len(data)} bytes")
+
+    segwit = len(data) > o + 1 and data[o] == 0 and data[o + 1] == 1
+    if segwit:
+        o += 2
+        add_kv("SegWit", "yes")
+    else:
+        add_kv("SegWit", "no")
+
+    vin_count, o = _read_varint(data, o)
+    add_kv("Inputs", str(vin_count))
+    lines.append("")
+    lines.append("INPUTS")
+    lines.append("-" * 72)
+    for i in range(vin_count):
+        prev_txid = data[o:o + 32][::-1].hex(); o += 32
+        vout = int.from_bytes(data[o:o + 4], "little"); o += 4
+        script_len, o = _read_varint(data, o)
+        script_sig = data[o:o + script_len].hex(); o += script_len
+        sequence = data[o:o + 4].hex(); o += 4
+        lines.append(f"[{i}] {prev_txid}:{vout}")
+        lines.append(f"    scriptSig : {script_sig or '(empty)'}")
+        lines.append(f"    sequence  : {sequence}")
+        lines.append("")
+
+    vout_count, o = _read_varint(data, o)
+    add_kv("Outputs", str(vout_count))
+    lines.append("")
+    lines.append("OUTPUTS")
+    lines.append("-" * 72)
+    for i in range(vout_count):
+        value_sats = int.from_bytes(data[o:o + 8], "little"); o += 8
+        spk_len, o = _read_varint(data, o)
+        spk = data[o:o + spk_len].hex(); o += spk_len
+        value_btc = value_sats / 100_000_000
+        lines.append(f"[{i}] {value_sats:,} sats  ({value_btc:.8f} BTC)")
+        lines.append(f"    scriptPubKey: {spk}")
+        if spk.startswith("6a"):
+            lines.append(f"    OP_RETURN   : {_decode_op_return(spk)}")
+        lines.append("")
+
+    if segwit:
+        lines.append("WITNESS")
+        lines.append("-" * 72)
+        for i in range(vin_count):
+            items, o = _read_varint(data, o)
+            lines.append(f"[{i}] items: {items}")
+            for j in range(items):
+                item_len, o = _read_varint(data, o)
+                item = data[o:o + item_len].hex(); o += item_len
+                lines.append(f"    [{j}] {item}")
+            lines.append("")
+
+    locktime = int.from_bytes(data[o:o + 4], "little")
+    add_kv("Locktime", str(locktime))
+    return "\n".join(lines)
+
+
 # ─── Logic ───────────────────────────────────────────────────────────────────
 
 def get_recommended_fee():
@@ -349,8 +453,40 @@ def run_batch_mint():
         log_error(f"Enclave REJECTED Batch: {sign_resp.get('error')}")
         return
 
-    signed_psbts = sign_resp.get("signed_batch_psbts")
+    signed_psbts = sign_resp.get("signed_batch_psbts") or []
+    if not signed_psbts:
+        log_error("Enclave returned no signed transactions.")
+        return
     log_success(f"Batch authorized & signed. {len(signed_psbts)} transactions ready.")
+
+    # ─── TX PREVIEW (Human Verification) ────────────────────────────────────
+    preview_lines = []
+    preview_lines.append("Sovereign Batch Mint — TX CHAIN PREVIEW")
+    preview_lines.append("=" * 72)
+    preview_lines.append(f"Transactions: {len(signed_psbts)}")
+    preview_lines.append(f"Batch ID    : {manifest['batch_id']}")
+    preview_lines.append(f"Destination : {destination_address}")
+    preview_lines.append(f"Rune ID     : {rune_id}")
+    preview_lines.append(f"Fee rate    : {fee_rate} sat/vB")
+    preview_lines.append("")
+
+    for i, tx_hex in enumerate(signed_psbts, start=1):
+        preview_lines.append(f"TX {i}/{len(signed_psbts)}")
+        preview_lines.append("-" * 72)
+        try:
+            preview_lines.append(decode_tx_hex(tx_hex))
+        except Exception as e:
+            preview_lines.append(f"Failed to decode transaction: {e}")
+            preview_lines.append(tx_hex)
+        preview_lines.append("")
+
+    preview_file = os.path.join(ROOT_DIR, "batch_chain_preview.txt")
+    with open(preview_file, "w") as f:
+        f.write("\n".join(preview_lines))
+
+    print(f"\n{BOLD}{GOLD}📋 BATCH TX VERIFICATION PREVIEW{RESET}")
+    print(f"Saved to: {BOLD}{preview_file}{RESET}\n")
+    print("\n".join(preview_lines))
 
     # 5. Sequential Broadcast
     confirm = interactive_prompt("Broadcast the chain to Mainnet now? (y/n)", "n")
