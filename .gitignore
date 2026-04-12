@@ -43,6 +43,7 @@ bridge.log
 .gemini/
 .MCP/
 MANDATE.json
+temp/
 .claudeprompt
 node_modules/
 bun.lock
